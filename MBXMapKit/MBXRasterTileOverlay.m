@@ -238,7 +238,12 @@
 
     // Default attribution
     self.attribution = @"© Mapbox\n© OpenStreetMap Contributors";
-
+    
+    // Overzoom
+    //
+    _overzoomEnabled = NO;
+    _overzoomThreshold = self.maximumZ;
+    
     // Initiate asynchronous metadata and marker loading
     //
     if(includeMetadata)
@@ -289,20 +294,41 @@
         //
         return;
     }
+    
+    long x = path.x;
+    long y = path.y;
+    long z = path.z;
+    
+    // Overzoom
+    //
+    if (_overzoomEnabled && z > _overzoomThreshold)
+    {
+        NSInteger p = 1 << (z - _overzoomThreshold);
+        x /= p;
+        y /= p;
+        z = _overzoomThreshold;
+    }
 
     NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"https://a.tiles.mapbox.com/%@/%@/%ld/%ld/%ld%@.%@%@",
                                        ([MBXMapKit accessToken] ? @"v4" : @"v3"),
                                        _mapID,
-                                       (long)path.z,
-                                       (long)path.x,
-                                       (long)path.y,
+                                       (long)z,
+                                       (long)x,
+                                       (long)y,
                                        (path.contentScaleFactor > 1.0 ? @"@2x" : @""),
                                        [MBXRasterTileOverlay qualityExtensionForImageQuality:_imageQuality],
                                        ([MBXMapKit accessToken] ? [@"?access_token=" stringByAppendingString:[MBXMapKit accessToken]] : @"")
                                        ]];
-
+    
     void(^completionHandler)(NSData *,NSError *) = ^(NSData *data, NSError *error)
     {
+        // Overzoom
+        //
+        if (self.overzoomEnabled && path.z > _overzoomThreshold)
+        {
+            data = [self overzoomImageDataForPath:path imageData:data];
+        }
+        
         // Invoke the loadTileAtPath's completion handler
         //
         if ([NSThread isMainThread])
@@ -319,6 +345,27 @@
 
     [self asyncLoadURL:url workerBlock:nil completionHandler:completionHandler];
 }
+
+- (NSData *)overzoomImageDataForPath:(MKTileOverlayPath)path imageData:(NSData *)data
+{
+    NSInteger p = 1 << (path.z - _overzoomThreshold);
+    NSInteger x = path.x % p;
+    NSInteger y = path.y % p;
+    UIImage *image = [UIImage imageWithData:data];
+    CGRect originalRect = CGRectMake(0, 0, image.size.width, image.size.height);
+    
+    UIGraphicsBeginImageContext(originalRect.size);
+    {
+        CGRect drawRect = CGRectApplyAffineTransform(originalRect, CGAffineTransformMakeScale(p, p));
+        drawRect = CGRectApplyAffineTransform(drawRect, CGAffineTransformMakeTranslation(-image.size.width * x, -image.size.height * y));
+        [image drawInRect:drawRect];
+        image = UIGraphicsGetImageFromCurrentImageContext();
+    }
+    UIGraphicsEndImageContext();
+    
+    return UIImageJPEGRepresentation(image, 0.8);
+}
+
 
 #pragma mark - Delegate Notifications
 
@@ -564,8 +611,17 @@
                 && _tileJSONDictionary[@"bounds"] && [_tileJSONDictionary[@"bounds"] count] == 4)
             {
                 self.minimumZ = [_tileJSONDictionary[@"minzoom"] integerValue];
-                self.maximumZ = [_tileJSONDictionary[@"maxzoom"] integerValue];
-
+                if (!self.overzoomEnabled)
+                {
+                    self.maximumZ = [_tileJSONDictionary[@"maxzoom"] integerValue];
+                }
+                // If over-zoom is enabled and the threshold property has not been changed, use the metadata value.
+                //
+                else if (_overzoomThreshold == self.maximumZ)
+                {
+                    _overzoomThreshold = [_tileJSONDictionary[@"maxzoom"] integerValue];
+                }
+                
                 _centerZoom = [_tileJSONDictionary[@"center"][2] integerValue];
                 _center.latitude = [_tileJSONDictionary[@"center"][1] doubleValue];
                 _center.longitude = [_tileJSONDictionary[@"center"][0] doubleValue];

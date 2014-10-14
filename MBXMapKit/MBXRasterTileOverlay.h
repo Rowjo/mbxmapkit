@@ -144,4 +144,11 @@ extern NSInteger const MBXMapKitErrorCodeDictionaryMissingKeys;
 - (void)clearCachedMarkers;
 
 
+#pragma mark - overzoom
+
+/** Enables over-zooming. If YES, overzoom occurs at all zoom levels higher than the maximumZ value retrived from the overlay's metadata. maximumZ is set to the default 21 if enabled. */
+@property (nonatomic) BOOL overzoomEnabled;
+/** The threshold over-zoom level. Overzoom is performed at zoom levels greater than this value. Defaults to the maximumZ metadata retreived for the overlay */
+@property (nonatomic) NSInteger overzoomThreshold;
+
 @end

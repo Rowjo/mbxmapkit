@@ -79,6 +79,11 @@
     // Configure a raster tile overlay to use the initial sample map
     //
     _rasterOverlay = [[MBXRasterTileOverlay alloc] initWithMapID:@"examples.map-pgygbwdm"];
+    
+    // Test overzoom
+    //
+    _rasterOverlay.overzoomEnabled = YES;
+    _rasterOverlay.overzoomThreshold = 15;
 
     // Let the raster tile overlay know that we want to be notified when it has asynchronously loaded the sample map's metadata
     // (so we can set the map's center and zoom) and the sample map's markers (so we can add them to the map).
