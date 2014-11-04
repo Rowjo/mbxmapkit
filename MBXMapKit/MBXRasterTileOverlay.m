@@ -253,6 +253,8 @@ typedef NS_ENUM(NSUInteger, MBXRenderCompletionState) {
     // Default attribution
     self.attribution = @"© Mapbox\n© OpenStreetMap Contributors";
     
+    self.pendingTileRenders = [NSMutableSet new];
+    
     // Overzoom
     //
     _overzoomEnabled = NO;
