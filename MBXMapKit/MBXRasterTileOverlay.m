@@ -7,6 +7,12 @@
 
 #import "MBXMapKit.h"
 
+typedef NS_ENUM(NSUInteger, MBXRenderCompletionState) {
+    MBXRenderCompletionStateUnknown = 0,
+    MBXRenderCompletionStatePartial = 1,
+    MBXRenderCompletionStateFull = 2
+};
+
 #pragma mark - Private API for creating verbose errors
 
 @interface NSError (MBXError)
@@ -43,6 +49,10 @@
 @property (readwrite,nonatomic) NSArray *markers;
 @property (readwrite,nonatomic) NSString *attribution;
 
+#pragma mark - Private properties for rendering completion notification
+
+@property (nonatomic) NSMutableSet *pendingTileRenders;
+@property (nonatomic) MBXRenderCompletionState renderCompletionState;
 
 #pragma mark - Properties for asynchronous downloading of metadata and markers
 
@@ -232,6 +242,10 @@
                                            dataName,
                                            (accessToken ? [@"?" stringByAppendingString:accessToken] : @"")]];
 
+    // Use larger tiles if on v4 API
+    //
+    if ([MBXMapKit accessToken]) self.tileSize = CGSizeMake(512, 512);
+
     // Default to covering up Apple's map
     //
     self.canReplaceMapContent = YES;
@@ -342,6 +356,10 @@
             });
         }
     };
+
+    if (self.renderCompletionState == MBXRenderCompletionStateUnknown) self.renderCompletionState = MBXRenderCompletionStateFull;
+
+    [self addPendingRender:url removePendingRender:nil];
 
     [self asyncLoadURL:url workerBlock:nil completionHandler:completionHandler];
 }
@@ -658,6 +676,8 @@
     // 3. Provide a hook point for implementing alternate methods (i.e. offline map database) of fetching data for a URL
     //
 
+    __weak MBXRasterTileOverlay *weakSelf = self;
+
     if (_offlineMapDatabase)
     {
         // If this assert fails, it's probably because MBXOfflineMapDownloader's removeOfflineMapDatabase: method has been invoked
@@ -677,6 +697,10 @@
             if (workerBlock) workerBlock(data, &error);
         }
         completionHandler(data,error);
+
+        if (error && weakSelf.renderCompletionState == MBXRenderCompletionStateFull) weakSelf.renderCompletionState = MBXRenderCompletionStatePartial;
+
+        [weakSelf addPendingRender:nil removePendingRender:url];
     }
     else
     {
@@ -701,11 +725,43 @@
             }
 
             completionHandler(data,error);
+
+            if (error && weakSelf.renderCompletionState == MBXRenderCompletionStateFull) weakSelf.renderCompletionState = MBXRenderCompletionStatePartial;
+
+            [weakSelf addPendingRender:nil removePendingRender:url];
         }];
         [task resume];
     }
 }
 
+- (void)addPendingRender:(NSURL *)addURL removePendingRender:(NSURL *)removeURL
+{
+    dispatch_async(dispatch_get_main_queue(), ^(void)
+    {
+        if (addURL) [self.pendingTileRenders addObject:addURL];
+
+        if ([self.pendingTileRenders containsObject:removeURL]) [self.pendingTileRenders removeObject:removeURL];
+
+        if ([self.pendingTileRenders count] == 0)
+        {
+            [NSObject cancelPreviousPerformRequestsWithTarget:self];
+
+            [self performSelector:@selector(notifyRenderDelegateWithSuccess:)
+                       withObject:@(self.renderCompletionState == MBXRenderCompletionStateFull)
+                       afterDelay:0.5];
+        }
+    });
+}
+
+- (void)notifyRenderDelegateWithSuccess:(NSNumber *)flag
+{
+    if (self.delegate && [self.delegate respondsToSelector:@selector(tileOverlayDidFinishRendering:fullyRendered:)])
+    {
+        [self.delegate tileOverlayDidFinishRendering:self fullyRendered:[flag boolValue]];
+    }
+
+    self.renderCompletionState = MBXRenderCompletionStateUnknown;
+}
 
 #pragma mark - Helper methods
 
